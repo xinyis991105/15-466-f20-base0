@@ -23,21 +23,49 @@ struct PongMode : Mode {
 
 	//----- game state -----
 
-	glm::vec2 court_radius = glm::vec2(7.0f, 5.0f);
+	glm::vec2 court_radius = glm::vec2(7.0f, 7.0f);
 	glm::vec2 paddle_radius = glm::vec2(0.2f, 1.0f);
+	glm::vec2 paddle_radius_h = glm::vec2(1.0f, 0.2f);
 	glm::vec2 ball_radius = glm::vec2(0.2f, 0.2f);
 
 	glm::vec2 left_paddle = glm::vec2(-court_radius.x + 0.5f, 0.0f);
 	glm::vec2 right_paddle = glm::vec2( court_radius.x - 0.5f, 0.0f);
+	glm::vec2 top_paddle = glm::vec2(0.0f, -court_radius.y + 0.5f);
+	glm::vec2 bottom_paddle = glm::vec2(0.0f, court_radius.y - 0.5f);
 
 	glm::vec2 ball = glm::vec2(0.0f, 0.0f);
-	glm::vec2 ball_velocity = glm::vec2(-1.0f, 0.0f);
+	glm::vec2 ball_velocity = glm::vec2(0.0f, 0.0f);
+	glm::u8vec4 top_color = glm::u8vec4(0xd1, 0xbb, 0x54, 0xff);
+	glm::u8vec4 bottom_color = glm::u8vec4(0xd1, 0xbb, 0x54, 0xff);
+	glm::u8vec4 left_color = glm::u8vec4(0xd1, 0xbb, 0x54, 0xff);
+	glm::u8vec4 right_color = glm::u8vec4(0xd1, 0xbb, 0x54, 0xff);
 
-	uint32_t left_score = 0;
-	uint32_t right_score = 0;
+	// now kept in track 
+	// uint32_t left_score = 0;
+	// uint32_t right_score = 0;
+
+	// the real score
+	uint32_t player_score = 0;
+	uint32_t ai_score = 0;
+
+	int num_win = 1;
+	bool draw_arrow = true;
+	bool draw_ok = false;
+	bool draw_not_ok = false;
+	bool fallen_through = false;
+	glm::u8vec4 fall_through = glm::u8vec4(0,0,0,0);
+	// green color side
+	// int green_color_side = -1;
+	// float k = 1.0f;
+
+	// 1 for player; 2 for AI; 0 for wall
+	int last_bounce_id = -1;
 
 	float ai_offset = 0.0f;
 	float ai_offset_update = 0.0f;
+	float reveal_checkpoint = 3.0f;
+	float ball_dir = 0.0f;
+	float timer = 0.0f;
 
 	//----- pretty rainbow trails -----
 

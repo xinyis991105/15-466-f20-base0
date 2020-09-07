@@ -7,6 +7,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <random>
+#include <math.h>
 
 PongMode::PongMode() {
 
@@ -119,13 +120,24 @@ PongMode::~PongMode() {
 
 bool PongMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
 
-	if (evt.type == SDL_MOUSEMOTION) {
-		//convert mouse from window pixels (top-left origin, +y is down) to clip space ([-1,1]x[-1,1], +y is up):
-		glm::vec2 clip_mouse = glm::vec2(
-			(evt.motion.x + 0.5f) / window_size.x * 2.0f - 1.0f,
-			(evt.motion.y + 0.5f) / window_size.y *-2.0f + 1.0f
-		);
-		left_paddle.y = (clip_to_court * glm::vec3(clip_mouse, 1.0f)).y;
+	// if (evt.type == SDL_MOUSEMOTION) {
+	// 	//convert mouse from window pixels (top-left origin, +y is down) to clip space ([-1,1]x[-1,1], +y is up):
+	// 	glm::vec2 clip_mouse = glm::vec2(
+	// 		(evt.motion.x + 0.5f) / window_size.x * 2.0f - 1.0f,
+	// 		(evt.motion.y + 0.5f) / window_size.y *-2.0f + 1.0f
+	// 	);
+	// 	left_paddle.y = (clip_to_court * glm::vec3(clip_mouse, 1.0f)).y;
+	// }
+
+	if (evt.type == SDL_KEYDOWN) {
+		if (evt.key.keysym.sym == SDLK_DOWN) {
+			ball_dir -= 0.1f;
+		} else if (evt.key.keysym.sym == SDLK_UP) {
+			ball_dir += 0.1f;
+		} else if (evt.key.keysym.sym == SDLK_SPACE && draw_arrow) {
+			draw_arrow = false;
+			ball_velocity = glm::vec2(4.0f * cos(ball_dir), 4.0f * sin(ball_dir));
+		}
 	}
 
 	return false;
@@ -135,25 +147,81 @@ void PongMode::update(float elapsed) {
 
 	static std::mt19937 mt; //mersenne twister pseudo-random number generator
 
+	// timer accumulation
+	timer += elapsed;
+
+	if (timer > reveal_checkpoint &&
+		fall_through[0] == 0 && fall_through[1] == 0 &&
+		fall_through[2] == 0 && fall_through[3] == 0) {
+		static std::mt19937 mt;
+		fall_through[(mt() >> 3) % 4] = 1;
+	}
+
+	if ((draw_ok || draw_not_ok) && timer > reveal_checkpoint) {
+		draw_ok = false;
+		draw_not_ok = false;
+		ball.x = 0.0f;
+		ball.y = 0.0f;
+		ball_velocity.x = 0.0f;
+		ball_velocity.y = 0.0f;
+		draw_arrow = true;
+		timer = 0.0f;
+		for (int i = 0; i < 4; i++) {
+			fall_through[i] = 0;
+		}
+		fallen_through = false;
+	}
+
 	//----- paddle update -----
 
-	{ //right player ai:
+	{ 	// right player ai:
 		ai_offset_update -= elapsed;
+		float div = std::min((float) (num_win + 1), 3.0f);
 		if (ai_offset_update < elapsed) {
 			//update again in [0.5,1.0) seconds:
 			ai_offset_update = (mt() / float(mt.max())) * 0.5f + 0.5f;
 			ai_offset = (mt() / float(mt.max())) * 2.5f - 1.25f;
 		}
+		float divt = fall_through[0] == 0 ? div : div * 1.5f;
+		float divb = fall_through[2] == 0 ? div : div * 1.5f;
+		float divl = fall_through[3] == 0 ? div : div * 1.5f;
+		float divr = fall_through[1] == 0 ? div : div * 1.5f;
 		if (right_paddle.y < ball.y + ai_offset) {
-			right_paddle.y = std::min(ball.y + ai_offset, right_paddle.y + 2.0f * elapsed);
+			right_paddle.y = std::min(ball.y + ai_offset, right_paddle.y + divr * elapsed);
 		} else {
-			right_paddle.y = std::max(ball.y + ai_offset, right_paddle.y - 2.0f * elapsed);
+			right_paddle.y = std::max(ball.y + ai_offset, right_paddle.y - divr * elapsed);
+		}
+		// bottom player ai
+		if (bottom_paddle.x < ball.x + ai_offset) {
+			bottom_paddle.x = std::min(ball.x + ai_offset, bottom_paddle.x + divb * elapsed);
+		} else {
+			bottom_paddle.x = std::max(ball.x + ai_offset, bottom_paddle.x - divb * elapsed);
+		}
+
+		// top player ai
+		if (top_paddle.x < ball.x + ai_offset) {
+			top_paddle.x = std::min(ball.x + ai_offset, top_paddle.x + divt * elapsed);
+		} else {
+			top_paddle.x = std::max(ball.x + ai_offset, top_paddle.x - divt * elapsed);
+		}
+
+		// left player ai
+		if (left_paddle.y < ball.y + ai_offset) {
+			left_paddle.y = std::min(ball.y + ai_offset, left_paddle.y + divl * elapsed);
+		} else {
+			left_paddle.y = std::max(ball.y + ai_offset, left_paddle.y - divl * elapsed);
 		}
 	}
 
-	//clamp paddles to court:
+	// //clamp paddles to court:
 	right_paddle.y = std::max(right_paddle.y, -court_radius.y + paddle_radius.y);
 	right_paddle.y = std::min(right_paddle.y,  court_radius.y - paddle_radius.y);
+
+	top_paddle.x = std::max(top_paddle.x, -court_radius.x + paddle_radius_h.x);
+	top_paddle.x = std::min(top_paddle.x, court_radius.x - paddle_radius_h.x);
+
+	bottom_paddle.x = std::max(bottom_paddle.x, -court_radius.x + paddle_radius_h.x);
+	bottom_paddle.x = std::min(bottom_paddle.x, court_radius.x - paddle_radius_h.x);
 
 	left_paddle.y = std::max(left_paddle.y, -court_radius.y + paddle_radius.y);
 	left_paddle.y = std::min(left_paddle.y,  court_radius.y - paddle_radius.y);
@@ -161,12 +229,13 @@ void PongMode::update(float elapsed) {
 	//----- ball update -----
 
 	//speed of ball doubles every four points:
-	float speed_multiplier = 4.0f * std::pow(2.0f, (left_score + right_score) / 4.0f);
+	// float speed_multiplier = 4.0f * std::pow(2.0f, (left_score + right_score) / 4.0f);
 
 	//velocity cap, though (otherwise ball can pass through paddles):
-	speed_multiplier = std::min(speed_multiplier, 10.0f);
+	// speed_multiplier = std::min(speed_multiplier, 10.0f);
 
-	ball += elapsed * speed_multiplier * ball_velocity;
+	float mult = std::pow(1.5f, num_win);
+	ball += elapsed * (std::min(mult, 3.0f)) * ball_velocity;
 
 	//---- collision handling ----
 
@@ -177,7 +246,7 @@ void PongMode::update(float elapsed) {
 		glm::vec2 max = glm::min(paddle + paddle_radius, ball + ball_radius);
 
 		//if no overlap, no collision:
-		if (min.x > max.x || min.y > max.y) return;
+		if (min.x > max.x || min.y > max.y) return false;
 
 		if (max.x - min.x > max.y - min.y) {
 			//wider overlap in x => bounce in y direction:
@@ -201,36 +270,91 @@ void PongMode::update(float elapsed) {
 			float vel = (ball.y - paddle.y) / (paddle_radius.y + ball_radius.y);
 			ball_velocity.y = glm::mix(ball_velocity.y, vel, 0.75f);
 		}
+		return true;
 	};
-	paddle_vs_ball(left_paddle);
-	paddle_vs_ball(right_paddle);
+	auto paddle_vs_ball_h = [this](glm::vec2 const &paddle) {
+		//compute area of overlap:
+		glm::vec2 min = glm::max(paddle - paddle_radius_h, ball - ball_radius);
+		glm::vec2 max = glm::min(paddle + paddle_radius_h, ball + ball_radius);
+
+		//if no overlap, no collision:
+		if (min.x > max.x || min.y > max.y) return false;
+
+		if (max.x - min.x > max.y - min.y) {
+			//wider overlap in x => bounce in y direction:
+			if (ball.y > paddle.y) {
+				ball.y = paddle.y + paddle_radius_h.y + ball_radius.y;
+				ball_velocity.y = std::abs(ball_velocity.y);
+			} else {
+				ball.y = paddle.y - paddle_radius_h.y - ball_radius.y;
+				ball_velocity.y = -std::abs(ball_velocity.y);
+			}
+		} else {
+			//wider overlap in y => bounce in x direction:
+			if (ball.x > paddle.x) {
+				ball.x = paddle.x + paddle_radius_h.x + ball_radius.x;
+				ball_velocity.x = std::abs(ball_velocity.x);
+			} else {
+				ball.x = paddle.x - paddle_radius_h.x - ball_radius.x;
+				ball_velocity.x = -std::abs(ball_velocity.x);
+			}
+			//warp x velocity based on offset from paddle center:
+			float vel = (ball.x - paddle.x) / (paddle_radius_h.x + ball_radius.x);
+			ball_velocity.x = glm::mix(ball_velocity.x, vel, 0.75f);
+		}
+		return true;
+	};
+
+	if (!draw_ok && !draw_not_ok) {
+		if (paddle_vs_ball(left_paddle) || paddle_vs_ball(right_paddle) ||
+			paddle_vs_ball_h(top_paddle) || paddle_vs_ball_h(bottom_paddle)) {
+			draw_not_ok = true;
+			timer = 0.0f;
+		}
+	}
 
 	//court walls:
-	if (ball.y > court_radius.y - ball_radius.y) {
-		ball.y = court_radius.y - ball_radius.y;
-		if (ball_velocity.y > 0.0f) {
-			ball_velocity.y = -ball_velocity.y;
+	if (!draw_ok && !draw_not_ok) {
+		if (ball.y > court_radius.y - ball_radius.y && !fall_through[2] && !fallen_through) {
+			ball.y = court_radius.y - ball_radius.y;
+			if (ball_velocity.y > 0.0f) {
+				ball_velocity.y = -ball_velocity.y;
+			}
 		}
-	}
-	if (ball.y < -court_radius.y + ball_radius.y) {
-		ball.y = -court_radius.y + ball_radius.y;
-		if (ball_velocity.y < 0.0f) {
-			ball_velocity.y = -ball_velocity.y;
+		if (ball.y < -court_radius.y + ball_radius.y && !fall_through[0] && !fallen_through) {
+			ball.y = -court_radius.y + ball_radius.y;
+			if (ball_velocity.y < 0.0f) {
+				ball_velocity.y = -ball_velocity.y;
+			}
 		}
-	}
 
-	if (ball.x > court_radius.x - ball_radius.x) {
-		ball.x = court_radius.x - ball_radius.x;
-		if (ball_velocity.x > 0.0f) {
-			ball_velocity.x = -ball_velocity.x;
-			left_score += 1;
+		if (ball.x > court_radius.x - ball_radius.x && !fall_through[1] && !fallen_through) {
+			ball.x = court_radius.x - ball_radius.x;
+			if (ball_velocity.x > 0.0f) {
+				ball_velocity.x = -ball_velocity.x;
+			}
 		}
-	}
-	if (ball.x < -court_radius.x + ball_radius.x) {
-		ball.x = -court_radius.x + ball_radius.x;
-		if (ball_velocity.x < 0.0f) {
-			ball_velocity.x = -ball_velocity.x;
-			right_score += 1;
+		if (ball.x < -court_radius.x + ball_radius.x && !fall_through[3] && !fallen_through) {
+			ball.x = -court_radius.x + ball_radius.x;
+			if (ball_velocity.x < 0.0f) {
+				ball_velocity.x = -ball_velocity.x;
+			}
+		}
+
+		if (ball.x < -court_radius.x + ball_radius.x ||
+			ball.x > court_radius.x - ball_radius.x ||
+			ball.y < -court_radius.y + ball_radius.y ||
+			ball.y > court_radius.y - ball_radius.y) {
+			fallen_through = true;
+		}
+
+		if (ball.x < -court_radius.x - ball_trail.size() * ball_radius.x ||
+			ball.x > court_radius.x + ball_trail.size() * ball_radius.x ||
+			ball.y < -court_radius.y - ball_trail.size() * ball_radius.y ||
+			ball.y > court_radius.y + ball_trail.size() * ball_radius.y) {
+			draw_ok = true;
+			num_win += 1;
+			timer = 0.0f;
 		}
 	}
 
@@ -256,6 +380,9 @@ void PongMode::draw(glm::uvec2 const &drawable_size) {
 	const glm::u8vec4 bg_color = HEX_TO_U8VEC4(0x171714ff);
 	const glm::u8vec4 fg_color = HEX_TO_U8VEC4(0xd1bb54ff);
 	const glm::u8vec4 shadow_color = HEX_TO_U8VEC4(0x604d29ff);
+	const glm::u8vec4 arrow_color = HEX_TO_U8VEC4(0xffff00ff);
+	const glm::u8vec4 green = HEX_TO_U8VEC4(0x00ff00ff);
+	const glm::u8vec4 red = HEX_TO_U8VEC4(0xff0000ff);
 	const std::vector< glm::u8vec4 > rainbow_colors = {
 		HEX_TO_U8VEC4(0x604d29ff), HEX_TO_U8VEC4(0x624f29fc), HEX_TO_U8VEC4(0x69542df2),
 		HEX_TO_U8VEC4(0x6a552df1), HEX_TO_U8VEC4(0x6b562ef0), HEX_TO_U8VEC4(0x6b562ef0),
@@ -269,9 +396,10 @@ void PongMode::draw(glm::uvec2 const &drawable_size) {
 	#undef HEX_TO_U8VEC4
 
 	//other useful drawing constants:
-	const float wall_radius = 0.05f;
+	const float wall_radius = 0.5f;
 	const float shadow_offset = 0.07f;
 	const float padding = 0.14f; //padding between outside of walls and edge of window
+
 
 	//---- compute vertices to draw ----
 
@@ -290,76 +418,163 @@ void PongMode::draw(glm::uvec2 const &drawable_size) {
 		vertices.emplace_back(glm::vec3(center.x-radius.x, center.y+radius.y, 0.0f), color, glm::vec2(0.5f, 0.5f));
 	};
 
+	auto draw_check = [&vertices](glm::vec2 const &center, glm::u8vec4 const &color) {
+		//draw rectangle as two CCW-oriented triangles:
+		vertices.emplace_back(glm::vec3(center.x, center.y, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x+0.5f, center.y+0.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x-1.0f, center.y+1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+
+		vertices.emplace_back(glm::vec3(center.x-0.5f, center.y+1.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x-1.0f, center.y+1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x+0.5f, center.y+0.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+
+		vertices.emplace_back(glm::vec3(center.x, center.y, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x+2.0f, center.y+2.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x-0.5f, center.y+0.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+
+		vertices.emplace_back(glm::vec3(center.x+1.5f, center.y+2.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x-0.5f, center.y+0.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x+2.0f, center.y+2.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+	};
+
+	auto draw_cross = [&vertices](glm::vec2 const &center, glm::u8vec4 const &color) {
+		//draw rectangle as two CCW-oriented triangles:
+		vertices.emplace_back(glm::vec3(center.x+1.5f, center.y-1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x-1.5f, center.y+1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x-1.0f, center.y+1.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+
+		vertices.emplace_back(glm::vec3(center.x+1.0f, center.y-1.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x-1.5f, center.y+1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x+1.5f, center.y-1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+
+		vertices.emplace_back(glm::vec3(center.x-1.5f, center.y-1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x+1.5f, center.y+1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x-1.0f, center.y-1.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+
+		vertices.emplace_back(glm::vec3(center.x+1.0f, center.y+1.5f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x+1.5f, center.y+1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(center.x-1.5f, center.y-1.0f, 0.0f), color, glm::vec2(0.5f, 0.5f));
+		
+	};
+
 	//shadows for everything (except the trail):
 
 	glm::vec2 s = glm::vec2(0.0f,-shadow_offset);
 
-	draw_rectangle(glm::vec2(-court_radius.x-wall_radius, 0.0f)+s, glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), shadow_color);
-	draw_rectangle(glm::vec2( court_radius.x+wall_radius, 0.0f)+s, glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), shadow_color);
-	draw_rectangle(glm::vec2( 0.0f,-court_radius.y-wall_radius)+s, glm::vec2(court_radius.x, wall_radius), shadow_color);
-	draw_rectangle(glm::vec2( 0.0f, court_radius.y+wall_radius)+s, glm::vec2(court_radius.x, wall_radius), shadow_color);
+	if (!fall_through[3]) {
+		draw_rectangle(glm::vec2(-court_radius.x-wall_radius, 0.0f)+s, glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), shadow_color);
+	}
+	if (!fall_through[1]) {
+		draw_rectangle(glm::vec2( court_radius.x+wall_radius, 0.0f)+s, glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), shadow_color);
+	}
+	if (!fall_through[0]) {
+		draw_rectangle(glm::vec2( 0.0f,-court_radius.y-wall_radius)+s, glm::vec2(court_radius.x, wall_radius), shadow_color);
+	}
+	if (!fall_through[2]) {
+		draw_rectangle(glm::vec2( 0.0f, court_radius.y+wall_radius)+s, glm::vec2(court_radius.x, wall_radius), shadow_color);
+	}
 	draw_rectangle(left_paddle+s, paddle_radius, shadow_color);
 	draw_rectangle(right_paddle+s, paddle_radius, shadow_color);
-	draw_rectangle(ball+s, ball_radius, shadow_color);
-
-	//ball's trail:
-	if (ball_trail.size() >= 2) {
-		//start ti at second element so there is always something before it to interpolate from:
-		std::deque< glm::vec3 >::iterator ti = ball_trail.begin() + 1;
-		//draw trail from oldest-to-newest:
-		for (uint32_t i = uint32_t(rainbow_colors.size())-1; i < rainbow_colors.size(); --i) {
-			//time at which to draw the trail element:
-			float t = (i + 1) / float(rainbow_colors.size()) * trail_length;
-			//advance ti until 'just before' t:
-			while (ti != ball_trail.end() && ti->z > t) ++ti;
-			//if we ran out of tail, stop drawing:
-			if (ti == ball_trail.end()) break;
-			//interpolate between previous and current trail point to the correct time:
-			glm::vec3 a = *(ti-1);
-			glm::vec3 b = *(ti);
-			glm::vec2 at = (t - a.z) / (b.z - a.z) * (glm::vec2(b) - glm::vec2(a)) + glm::vec2(a);
-			//draw:
-			draw_rectangle(at, ball_radius, rainbow_colors[i]);
+	if (!draw_ok && !draw_not_ok) {
+		draw_rectangle(ball+s, ball_radius, shadow_color);
+		//ball's trail:
+		if (ball_trail.size() >= 2 && ball.x != 0.0f && ball.y != 0.0f) {
+			//start ti at second element so there is always something before it to interpolate from:
+			std::deque< glm::vec3 >::iterator ti = ball_trail.begin() + 1;
+			//draw trail from oldest-to-newest:
+			for (uint32_t i = uint32_t(rainbow_colors.size())-1; i < rainbow_colors.size(); --i) {
+				//time at which to draw the trail element:
+				float t = (i + 1) / float(rainbow_colors.size()) * trail_length;
+				//advance ti until 'just before' t:
+				while (ti != ball_trail.end() && ti->z > t) ++ti;
+				//if we ran out of tail, stop drawing:
+				if (ti == ball_trail.end()) break;
+				//interpolate between previous and current trail point to the correct time:
+				glm::vec3 a = *(ti-1);
+				glm::vec3 b = *(ti);
+				glm::vec2 at = (t - a.z) / (b.z - a.z) * (glm::vec2(b) - glm::vec2(a)) + glm::vec2(a);
+				//draw:
+				draw_rectangle(at, ball_radius, rainbow_colors[i]);
+			}
 		}
 	}
 
 	//solid objects:
 
 	//walls:
-	draw_rectangle(glm::vec2(-court_radius.x-wall_radius, 0.0f), glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), fg_color);
-	draw_rectangle(glm::vec2( court_radius.x+wall_radius, 0.0f), glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), fg_color);
-	draw_rectangle(glm::vec2( 0.0f,-court_radius.y-wall_radius), glm::vec2(court_radius.x, wall_radius), fg_color);
-	draw_rectangle(glm::vec2( 0.0f, court_radius.y+wall_radius), glm::vec2(court_radius.x, wall_radius), fg_color);
+	if (!fall_through[0]) {
+		draw_rectangle(glm::vec2( 0.0f,-court_radius.y-wall_radius), glm::vec2(court_radius.x, wall_radius), fg_color);
+	}
+	if (!fall_through[2]) {
+		draw_rectangle(glm::vec2( 0.0f, court_radius.y+wall_radius), glm::vec2(court_radius.x, wall_radius), fg_color);
+	}
+	if (!fall_through[3]) {
+		draw_rectangle(glm::vec2(-court_radius.x-wall_radius, 0.0f), glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), fg_color);
+	}
+	if (!fall_through[1]) {
+		draw_rectangle(glm::vec2( court_radius.x+wall_radius, 0.0f), glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), fg_color);
+	}
 
 	//paddles:
 	draw_rectangle(left_paddle, paddle_radius, fg_color);
 	draw_rectangle(right_paddle, paddle_radius, fg_color);
+	draw_rectangle(top_paddle, paddle_radius_h, fg_color);
+	draw_rectangle(bottom_paddle, paddle_radius_h, fg_color);
 	
 
 	//ball:
-	draw_rectangle(ball, ball_radius, fg_color);
+	if (!draw_ok && !draw_not_ok) {
+		draw_rectangle(ball, ball_radius, fg_color);
+	}
 
+	if (draw_ok) {
+		draw_check(glm::vec2(0.0f, 0.0f), green);
+	}
+	if (draw_not_ok) {
+		draw_cross(glm::vec2(0.0f, 0.0f), red);
+	}
 	//scores:
 	glm::vec2 score_radius = glm::vec2(0.1f, 0.1f);
-	for (uint32_t i = 0; i < left_score; ++i) {
-		draw_rectangle(glm::vec2( -court_radius.x + (2.0f + 3.0f * i) * score_radius.x, court_radius.y + 2.0f * wall_radius + 2.0f * score_radius.y), score_radius, fg_color);
-	}
-	for (uint32_t i = 0; i < right_score; ++i) {
-		draw_rectangle(glm::vec2( court_radius.x - (2.0f + 3.0f * i) * score_radius.x, court_radius.y + 2.0f * wall_radius + 2.0f * score_radius.y), score_radius, fg_color);
-	}
+	// for (uint32_t i = 0; i < player_score; ++i) {
+	// 	draw_rectangle(glm::vec2( -court_radius.x + (2.0f + 3.0f * i) * score_radius.x, court_radius.y + 2.0f * wall_radius + 2.0f * score_radius.y), score_radius, fg_color);
+	// }
+	// for (uint32_t i = 0; i < left_score; ++i) {
+	// 	draw_rectangle(glm::vec2( -court_radius.x + (2.0f + 3.0f * i) * score_radius.x, court_radius.y + 2.0f * wall_radius + 2.0f * score_radius.y), score_radius, fg_color);
+	// }
+	// for (uint32_t i = 0; i < ai_score; ++i) {
+	// 	draw_rectangle(glm::vec2( court_radius.x - (2.0f + 3.0f * i) * score_radius.x, court_radius.y + 2.0f * wall_radius + 2.0f * score_radius.y), score_radius, fg_color);
+	// }
 
 
 
 	//------ compute court-to-window transform ------
+	// float lb = -court_radius.y - 2.0f * wall_radius - padding;
+	// float ub = court_radius.y + 2.0f * wall_radius + padding + 3.0f * score_radius.y;
+	// if (left_paddle.y - court_radius.y / 2.0f < -court_radius.y - 2.0f * wall_radius - padding) {
+	// 	ub = lb + court_radius.y;
+	// } else if (left_paddle.y + court_radius.y / 2.0f > court_radius.y + 2.0f * wall_radius + padding + 3.0f * score_radius.y) {
+	// 	lb = ub - court_radius.y;
+	// } else {
+	// 	lb = left_paddle.y - court_radius.y / 2.0f;
+	// 	ub = left_paddle.y + court_radius.y / 2.0f;
+	// }
+
+	if (draw_arrow) {
+		vertices.emplace_back(glm::vec3(ball.x + 0.2f * sin(ball_dir), ball.y + 0.2f * cos(ball_dir), 0.0f), arrow_color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(ball.x - 0.2f * sin(ball_dir), ball.y - 0.2f * cos(ball_dir), 0.0f), arrow_color, glm::vec2(0.5f, 0.5f));
+		vertices.emplace_back(glm::vec3(ball.x + 3.0f * cos(ball_dir), ball.y + 3.0f * sin(ball_dir), 0.0f), arrow_color, glm::vec2(0.5f, 0.5f));
+	}
 
 	//compute area that should be visible:
 	glm::vec2 scene_min = glm::vec2(
 		-court_radius.x - 2.0f * wall_radius - padding,
+		// lb
 		-court_radius.y - 2.0f * wall_radius - padding
 	);
 	glm::vec2 scene_max = glm::vec2(
 		court_radius.x + 2.0f * wall_radius + padding,
-		court_radius.y + 2.0f * wall_radius + 3.0f * score_radius.y + padding
+		// ub
+		court_radius.y + 2.0f * wall_radius + padding + 3.0f * score_radius.y
 	);
 
 	//compute window aspect ratio:
